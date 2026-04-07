@@ -8,27 +8,95 @@ namespace CrudItensWinForms;
 public partial class Form1 : Form
 {
     private readonly List<ItemCadastro> _itens = [];
+    private readonly List<MovimentoEstoque> _movimentos = [];
     private readonly BindingSource _bindingSource = new();
+
     private readonly string _caminhoArquivo = Path.Combine(AppContext.BaseDirectory, "itens.json");
+    private readonly string _caminhoMovimentos = Path.Combine(AppContext.BaseDirectory, "movimentos.json");
     private readonly UsuarioStore _usuarioStore = new(Path.Combine(AppContext.BaseDirectory, "usuarios.json"));
+
     private UsuarioSistema? _usuarioLogado;
     private int _proximoId = 1;
+    private int _proximoMovimentoId = 1;
+
+    private readonly Panel _panelTelaLista = new();
+    private readonly Label _lblTelaListaTitulo = new();
+    private readonly DataGridView _dgvTelaLista = new();
+    private readonly Button _btnVoltarItens = new();
 
     public Form1()
     {
         InitializeComponent();
+        InicializarTelaLista();
+        ConfigurarEventosNavegacaoMenu();
     }
 
     private void Form1_Load(object sender, EventArgs e)
     {
         ConfigurarGrade();
         CarregarDados();
+        CarregarMovimentos();
         AtualizarGrade();
 
         if (!RealizarLoginObrigatorio())
         {
             Close();
+            return;
         }
+
+        ExibirDashboard();
+    }
+
+    private void InicializarTelaLista()
+    {
+        _panelTelaLista.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+        _panelTelaLista.BackColor = Color.WhiteSmoke;
+        _panelTelaLista.Location = new Point(12, 36);
+        _panelTelaLista.Name = "panelTelaLista";
+        _panelTelaLista.Size = new Size(860, 503);
+        _panelTelaLista.Visible = false;
+
+        _lblTelaListaTitulo.AutoSize = true;
+        _lblTelaListaTitulo.Font = new Font("Segoe UI", 13F, FontStyle.Bold);
+        _lblTelaListaTitulo.Location = new Point(16, 14);
+        _lblTelaListaTitulo.Text = "Tela";
+
+        _btnVoltarItens.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        _btnVoltarItens.BackColor = Color.SteelBlue;
+        _btnVoltarItens.FlatStyle = FlatStyle.Flat;
+        _btnVoltarItens.ForeColor = Color.White;
+        _btnVoltarItens.Location = new Point(714, 12);
+        _btnVoltarItens.Size = new Size(130, 32);
+        _btnVoltarItens.Text = "Voltar p/ Itens";
+        _btnVoltarItens.UseVisualStyleBackColor = false;
+        _btnVoltarItens.Click += (_, _) => MostrarTelaCrudItens();
+
+        _dgvTelaLista.AllowUserToAddRows = false;
+        _dgvTelaLista.AllowUserToDeleteRows = false;
+        _dgvTelaLista.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+        _dgvTelaLista.BackgroundColor = Color.White;
+        _dgvTelaLista.Location = new Point(16, 58);
+        _dgvTelaLista.MultiSelect = false;
+        _dgvTelaLista.ReadOnly = true;
+        _dgvTelaLista.RowHeadersVisible = false;
+        _dgvTelaLista.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+        _dgvTelaLista.Size = new Size(828, 429);
+
+        _panelTelaLista.Controls.Add(_lblTelaListaTitulo);
+        _panelTelaLista.Controls.Add(_btnVoltarItens);
+        _panelTelaLista.Controls.Add(_dgvTelaLista);
+
+        Controls.Add(_panelTelaLista);
+    }
+
+    private void ConfigurarEventosNavegacaoMenu()
+    {
+        menuCadastros.Click += (_, _) => ExibirCategorias();
+        menuMovimentacoes.Click += (_, _) => ExibirMovimentacoes();
+        menuFinanceiro.Click += (_, _) => ExibirFinanceiro();
+        menuRelatorios.Click += (_, _) => ExibirInventarioCompleto();
+        menuUsuario.Click += (_, _) => ExibirSessaoUsuario();
+        menuAdministracao.Click += (_, _) => ExibirUsuariosAdmin();
     }
 
     private bool RealizarLoginObrigatorio()
@@ -58,6 +126,8 @@ public partial class Form1 : Form
         lblUsuarioLogado.Text = $"Usuario: {_usuarioLogado.NomeUsuario} ({(_usuarioLogado.EhAdmin ? "admin" : "operador")})";
         menuAdministracao.Enabled = _usuarioLogado.EhAdmin;
     }
+
+    private string UsuarioAtual => _usuarioLogado?.NomeUsuario ?? "sistema";
 
     private void ConfigurarGrade()
     {
@@ -121,6 +191,7 @@ public partial class Form1 : Form
         };
 
         _itens.Add(novoItem);
+        RegistrarMovimento("Cadastro", novoItem, novoItem.Quantidade);
         SalvarDados();
         AtualizarGrade();
         LimparFormulario();
@@ -144,6 +215,7 @@ public partial class Form1 : Form
         itemSelecionado.Quantidade = (int)nudQuantidade.Value;
         itemSelecionado.Preco = nudPreco.Value;
 
+        RegistrarMovimento("Edicao", itemSelecionado, itemSelecionado.Quantidade);
         SalvarDados();
         AtualizarGrade(itemSelecionado.Id);
     }
@@ -167,6 +239,7 @@ public partial class Form1 : Form
             return;
         }
 
+        RegistrarMovimento("Exclusao", itemSelecionado, itemSelecionado.Quantidade);
         _itens.Remove(itemSelecionado);
         SalvarDados();
         AtualizarGrade();
@@ -196,6 +269,7 @@ public partial class Form1 : Form
         };
 
         _itens.Add(copia);
+        RegistrarMovimento("Duplicacao", copia, copia.Quantidade);
         SalvarDados();
         AtualizarGrade(copia.Id);
     }
@@ -207,24 +281,17 @@ public partial class Form1 : Form
 
     private void menuDashboard_Click(object sender, EventArgs e)
     {
-        var quantidadeTotal = _itens.Sum(item => item.Quantidade);
-        var valorTotal = _itens.Sum(item => item.Quantidade * item.Preco);
-
-        MessageBox.Show(
-            $"Itens cadastrados: {_itens.Count}\nQuantidade em estoque: {quantidadeTotal}\nValor total em estoque: {valorTotal:C2}",
-            "Dashboard",
-            MessageBoxButtons.OK,
-            MessageBoxIcon.Information);
+        ExibirDashboard();
     }
 
     private void menuCadastrosItens_Click(object sender, EventArgs e)
     {
-        txtNome.Focus();
+        MostrarTelaCrudItens();
     }
 
     private void menuCadastrosCategorias_Click(object sender, EventArgs e)
     {
-        MessageBox.Show("Cadastro de categorias pode ser o proximo modulo a implementar.", "Cadastros", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        ExibirCategorias();
     }
 
     private void menuMovEntrada_Click(object sender, EventArgs e)
@@ -241,8 +308,10 @@ public partial class Form1 : Form
         }
 
         itemSelecionado.Quantidade += quantidade;
+        RegistrarMovimento("Entrada", itemSelecionado, quantidade);
         SalvarDados();
         AtualizarGrade(itemSelecionado.Id);
+        ExibirMovimentacoes();
     }
 
     private void menuMovSaida_Click(object sender, EventArgs e)
@@ -265,30 +334,25 @@ public partial class Form1 : Form
         }
 
         itemSelecionado.Quantidade -= quantidade;
+        RegistrarMovimento("Saida", itemSelecionado, quantidade);
         SalvarDados();
         AtualizarGrade(itemSelecionado.Id);
+        ExibirMovimentacoes();
     }
 
     private void menuFinanceiroResumo_Click(object sender, EventArgs e)
     {
-        using var form = new FinanceiroForm(_itens);
-        form.ShowDialog(this);
+        ExibirFinanceiro();
     }
 
     private void menuRelEstoqueBaixo_Click(object sender, EventArgs e)
     {
-        var itensBaixoEstoque = _itens
-            .Where(item => item.Quantidade <= 5)
-            .OrderBy(item => item.Quantidade)
-            .ThenBy(item => item.Nome)
-            .ToList();
-
-        using var form = new RelatorioEstoqueBaixoForm(itensBaixoEstoque);
-        form.ShowDialog(this);
+        ExibirEstoqueBaixo();
     }
 
     private void menuRelExportarCsv_Click(object sender, EventArgs e)
     {
+        ExibirInventarioCompleto();
         ExportarCsv(_itens.OrderBy(item => item.Id).ToList(), "inventario_completo");
     }
 
@@ -312,23 +376,227 @@ public partial class Form1 : Form
         if (!RealizarLoginObrigatorio())
         {
             Close();
+            return;
         }
+
+        ExibirDashboard();
     }
 
     private void menuAdmUsuarios_Click(object sender, EventArgs e)
     {
-        var usuarios = _usuarioStore.ListarUsuarios();
+        ExibirUsuariosAdmin();
+    }
 
-        if (usuarios.Count == 0)
+    private void ExibirDashboard()
+    {
+        var quantidadeTotal = _itens.Sum(item => item.Quantidade);
+        var valorTotal = _itens.Sum(item => item.Quantidade * item.Preco);
+
+        var dados = new List<DashboardLinha>
         {
-            MessageBox.Show("Nenhum usuario cadastrado.", "Administracao", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            new() { Indicador = "Itens cadastrados", Valor = _itens.Count.ToString(CultureInfo.CurrentCulture) },
+            new() { Indicador = "Quantidade em estoque", Valor = quantidadeTotal.ToString(CultureInfo.CurrentCulture) },
+            new() { Indicador = "Valor total em estoque", Valor = valorTotal.ToString("C2", CultureInfo.CurrentCulture) },
+            new() { Indicador = "Itens com estoque baixo (<=5)", Valor = _itens.Count(item => item.Quantidade <= 5).ToString(CultureInfo.CurrentCulture) },
+            new() { Indicador = "Ultimo acesso", Valor = DateTime.Now.ToString("g", CultureInfo.CurrentCulture) }
+        };
+
+        MostrarTelaLista("Dashboard", dados);
+    }
+
+    private void ExibirCategorias()
+    {
+        var dados = _itens
+            .GroupBy(item => string.IsNullOrWhiteSpace(item.Categoria) ? "(sem categoria)" : item.Categoria)
+            .Select(grupo => new CategoriaLinha
+            {
+                Categoria = grupo.Key,
+                Itens = grupo.Count(),
+                QuantidadeTotal = grupo.Sum(i => i.Quantidade),
+                ValorTotal = grupo.Sum(i => i.Quantidade * i.Preco)
+            })
+            .OrderBy(linha => linha.Categoria)
+            .ToList();
+
+        MostrarTelaLista("Cadastros - Categorias", dados);
+    }
+
+    private void ExibirMovimentacoes()
+    {
+        var dados = _movimentos
+            .OrderByDescending(m => m.DataHora)
+            .Select(m => new MovimentoLinha
+            {
+                Id = m.Id,
+                DataHora = m.DataHora,
+                Tipo = m.Tipo,
+                ItemId = m.ItemId,
+                Item = m.ItemNome,
+                Quantidade = m.Quantidade,
+                Usuario = m.Usuario
+            })
+            .ToList();
+
+        MostrarTelaLista("Movimentacoes", dados);
+    }
+
+    private void ExibirFinanceiro()
+    {
+        var dados = _itens
+            .OrderBy(item => item.Nome)
+            .Select(item => new FinanceiroLinha
+            {
+                Id = item.Id,
+                Item = item.Nome,
+                Categoria = item.Categoria,
+                Quantidade = item.Quantidade,
+                PrecoUnitario = item.Preco,
+                ValorTotal = item.Quantidade * item.Preco
+            })
+            .ToList();
+
+        MostrarTelaLista("Financeiro - Custos por Item", dados);
+    }
+
+    private void ExibirEstoqueBaixo()
+    {
+        var dados = _itens
+            .Where(item => item.Quantidade <= 5)
+            .OrderBy(item => item.Quantidade)
+            .ThenBy(item => item.Nome)
+            .Select(item => new EstoqueBaixoLinha
+            {
+                Id = item.Id,
+                Item = item.Nome,
+                Categoria = item.Categoria,
+                Quantidade = item.Quantidade,
+                Preco = item.Preco,
+                ValorTotal = item.Quantidade * item.Preco
+            })
+            .ToList();
+
+        MostrarTelaLista("Relatorio - Estoque Baixo", dados);
+    }
+
+    private void ExibirInventarioCompleto()
+    {
+        var dados = _itens
+            .OrderBy(item => item.Id)
+            .Select(item => new InventarioLinha
+            {
+                Id = item.Id,
+                Item = item.Nome,
+                Categoria = item.Categoria,
+                Quantidade = item.Quantidade,
+                Preco = item.Preco,
+                ValorTotal = item.Quantidade * item.Preco
+            })
+            .ToList();
+
+        MostrarTelaLista("Relatorio - Inventario Completo", dados);
+    }
+
+    private void ExibirSessaoUsuario()
+    {
+        var usuario = _usuarioLogado;
+
+        var dados = new List<SessaoUsuarioLinha>
+        {
+            new() { Campo = "Usuario", Valor = usuario?.NomeUsuario ?? "(nao autenticado)" },
+            new() { Campo = "Perfil", Valor = usuario?.EhAdmin == true ? "Administrador" : "Operador" },
+            new() { Campo = "Data/Hora", Valor = DateTime.Now.ToString("g", CultureInfo.CurrentCulture) },
+            new() { Campo = "Acoes", Valor = "Use o menu Usuario para trocar senha ou logout" }
+        };
+
+        MostrarTelaLista("Usuario - Sessao", dados);
+    }
+
+    private void ExibirUsuariosAdmin()
+    {
+        if (_usuarioLogado?.EhAdmin != true)
+        {
+            MessageBox.Show("Apenas administradores podem visualizar a lista de usuarios.", "Permissao", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
 
-        var resumo = string.Join(Environment.NewLine, usuarios.Select(usuario =>
-            $"- {usuario.NomeUsuario} ({(usuario.EhAdmin ? "admin" : "operador")})"));
+        var dados = _usuarioStore
+            .ListarUsuarios()
+            .Select(usuario => new UsuarioLinha
+            {
+                NomeUsuario = usuario.NomeUsuario,
+                Perfil = usuario.EhAdmin ? "Administrador" : "Operador"
+            })
+            .ToList();
 
-        MessageBox.Show($"Usuarios cadastrados:\n\n{resumo}", "Administracao", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        MostrarTelaLista("Administracao - Usuarios", dados);
+    }
+
+    private void MostrarTelaCrudItens()
+    {
+        _panelTelaLista.Visible = false;
+        panelFormulario.Visible = true;
+        dgvItens.Visible = true;
+        panelFormulario.BringToFront();
+        dgvItens.BringToFront();
+    }
+
+    private void MostrarTelaLista<T>(string titulo, IReadOnlyCollection<T> dados)
+    {
+        _lblTelaListaTitulo.Text = $"{titulo} - {dados.Count} registro(s)";
+
+        _dgvTelaLista.DataSource = null;
+        _dgvTelaLista.Columns.Clear();
+        _dgvTelaLista.AutoGenerateColumns = true;
+        _dgvTelaLista.DataSource = dados.ToList();
+
+        FormatarColunasTabela(_dgvTelaLista);
+
+        panelFormulario.Visible = false;
+        dgvItens.Visible = false;
+        _panelTelaLista.Visible = true;
+        _panelTelaLista.BringToFront();
+    }
+
+    private static void FormatarColunasTabela(DataGridView grid)
+    {
+        foreach (DataGridViewColumn coluna in grid.Columns)
+        {
+            var nome = coluna.Name.ToLowerInvariant();
+
+            if (nome.Contains("preco") || nome.Contains("valor") || nome.Contains("total"))
+            {
+                coluna.DefaultCellStyle.Format = "C2";
+                coluna.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleRight;
+            }
+
+            if (nome.Contains("data"))
+            {
+                coluna.DefaultCellStyle.Format = "g";
+            }
+
+            if (nome.Contains("quantidade"))
+            {
+                coluna.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
+            }
+        }
+
+        grid.AutoResizeColumns(DataGridViewAutoSizeColumnsMode.AllCells);
+    }
+
+    private void RegistrarMovimento(string tipo, ItemCadastro item, int quantidade)
+    {
+        _movimentos.Add(new MovimentoEstoque
+        {
+            Id = _proximoMovimentoId++,
+            DataHora = DateTime.Now,
+            Tipo = tipo,
+            ItemId = item.Id,
+            ItemNome = item.Nome,
+            Quantidade = quantidade,
+            Usuario = UsuarioAtual
+        });
+
+        SalvarMovimentos();
     }
 
     private void ExportarCsv(IReadOnlyCollection<ItemCadastro> itensParaExportar, string prefixo)
@@ -548,5 +816,111 @@ public partial class Form1 : Form
         {
             MessageBox.Show($"Falha ao salvar dados: {ex.Message}", "Erro", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
+    }
+
+    private void CarregarMovimentos()
+    {
+        if (!File.Exists(_caminhoMovimentos))
+        {
+            return;
+        }
+
+        try
+        {
+            var json = File.ReadAllText(_caminhoMovimentos);
+            var movimentos = JsonSerializer.Deserialize<List<MovimentoEstoque>>(json) ?? [];
+
+            _movimentos.Clear();
+            _movimentos.AddRange(movimentos);
+            _proximoMovimentoId = _movimentos.Count == 0 ? 1 : _movimentos.Max(m => m.Id) + 1;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Falha ao carregar movimentacoes: {ex.Message}", "Erro", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    private void SalvarMovimentos()
+    {
+        try
+        {
+            var json = JsonSerializer.Serialize(_movimentos.OrderBy(m => m.Id), new JsonSerializerOptions
+            {
+                WriteIndented = true
+            });
+
+            File.WriteAllText(_caminhoMovimentos, json);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Falha ao salvar movimentacoes: {ex.Message}", "Erro", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    private sealed class DashboardLinha
+    {
+        public string Indicador { get; set; } = string.Empty;
+        public string Valor { get; set; } = string.Empty;
+    }
+
+    private sealed class CategoriaLinha
+    {
+        public string Categoria { get; set; } = string.Empty;
+        public int Itens { get; set; }
+        public int QuantidadeTotal { get; set; }
+        public decimal ValorTotal { get; set; }
+    }
+
+    private sealed class MovimentoLinha
+    {
+        public int Id { get; set; }
+        public DateTime DataHora { get; set; }
+        public string Tipo { get; set; } = string.Empty;
+        public int ItemId { get; set; }
+        public string Item { get; set; } = string.Empty;
+        public int Quantidade { get; set; }
+        public string Usuario { get; set; } = string.Empty;
+    }
+
+    private sealed class FinanceiroLinha
+    {
+        public int Id { get; set; }
+        public string Item { get; set; } = string.Empty;
+        public string Categoria { get; set; } = string.Empty;
+        public int Quantidade { get; set; }
+        public decimal PrecoUnitario { get; set; }
+        public decimal ValorTotal { get; set; }
+    }
+
+    private sealed class EstoqueBaixoLinha
+    {
+        public int Id { get; set; }
+        public string Item { get; set; } = string.Empty;
+        public string Categoria { get; set; } = string.Empty;
+        public int Quantidade { get; set; }
+        public decimal Preco { get; set; }
+        public decimal ValorTotal { get; set; }
+    }
+
+    private sealed class InventarioLinha
+    {
+        public int Id { get; set; }
+        public string Item { get; set; } = string.Empty;
+        public string Categoria { get; set; } = string.Empty;
+        public int Quantidade { get; set; }
+        public decimal Preco { get; set; }
+        public decimal ValorTotal { get; set; }
+    }
+
+    private sealed class SessaoUsuarioLinha
+    {
+        public string Campo { get; set; } = string.Empty;
+        public string Valor { get; set; } = string.Empty;
+    }
+
+    private sealed class UsuarioLinha
+    {
+        public string NomeUsuario { get; set; } = string.Empty;
+        public string Perfil { get; set; } = string.Empty;
     }
 }
